@@ -67,46 +67,44 @@ def data_preparation():
     titanic_df['age_and_class.factor'] = titanic_df['age_range'] * (titanic_df['pclass']**2)
     titanic_df.drop(['sibsp', 'parch', 'status', 'age_range'], axis=1, inplace=True)
 
-    titanic_l = titanic_df[['survived']]
-    titanic_df = titanic_df.drop(['survived'], axis=1)
-    titanic_num = titanic_df.drop(['embarked', 'sex', 'status_state'], axis=1)
-    titanic_cat = titanic_df[['embarked', 'sex', 'status_state']]
-    imputer_num = SimpleImputer(strategy='median')
-    imputer_num.fit(titanic_num)
-    imputer_cat = SimpleImputer(strategy='most_frequent')
-    imputer_cat.fit(titanic_cat)
-
-    titanic_pre_tr_num = imputer_num.transform(titanic_num)
-    titanic_tr_num = pd.DataFrame(titanic_pre_tr_num, columns=titanic_num.columns, index=titanic_num.index)
-    titanic_pre_tr_cat = imputer_cat.transform(titanic_cat)
-    titanic_tr_cat = pd.DataFrame(titanic_pre_tr_cat, columns=titanic_cat.columns, index=titanic_cat.index)
-    cat_encoder = OrdinalEncoder()           #OneHotEncoder()
-    titanic_pre_tr_cat_ord = cat_encoder.fit_transform(titanic_tr_cat)
-
-    titanic_tr_cat_ord = pd.DataFrame(titanic_pre_tr_cat_ord, columns=titanic_cat.columns, index=titanic_cat.index)
-    # std_scaler = StandardScaler()
-    # titanic_pre_tr_num_sc = std_scaler.fit_transform(titanic_tr_num)
-    mm_scaler = MinMaxScaler()
-    titanic_pre_tr_num_sc = mm_scaler.fit_transform(titanic_tr_num)
-
-    titanic_tr_num_sc = pd.DataFrame(titanic_pre_tr_num_sc, columns=titanic_num.columns, index=titanic_num.index)
-    titanic_prepreprepard = titanic_tr_cat_ord.join(titanic_tr_num_sc)
-    titanic_preprepard = titanic_prepreprepard.join(titanic_l)
     split = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=1)
-    for train_index, test_index in split.split(titanic_preprepard, titanic_preprepard['sex']):
-        strat_tit_train_set = titanic_preprepard.reindex(index= train_index)
-        strat_tit_test_set = titanic_preprepard.reindex(index= test_index)
+    for train_index, test_index in split.split(titanic_df, titanic_df['sex']):
+        strat_tit_train_set = titanic_df.reindex(index= train_index)
+        strat_tit_test_set = titanic_df.reindex(index= test_index)
 
-    titanic_prepard = strat_tit_train_set.drop('survived', axis=1)
-    titanic_prepard_labels = strat_tit_train_set['survived'].copy()
+
+
+    titanic_df = strat_tit_train_set.drop('survived', axis=1)
+    titanic_labels = strat_tit_train_set['survived'].copy()
     le = LabelEncoder()
-    le.fit(titanic_prepard_labels)
-    return titanic_prepard, titanic_prepard_labels
+    le.fit(titanic_labels)
 
-def data_training(t,t_l):
+    titanic_num = titanic_df.drop(['embarked', 'sex', 'status_state'], axis=1)
+    titanic_cat1 = titanic_df[['sex', 'status_state']]
+    titanic_cat2 = titanic_df[['embarked']]
+
+    num_pipline = Pipeline([('imputer', SimpleImputer(strategy='median')), ('std_scaler', StandardScaler()), ])
+    cat1_pipline = Pipeline([('imputer', SimpleImputer(strategy='most_frequent')), ('ord', OrdinalEncoder()), ])
+    cat2_pipline = Pipeline([('imputer', SimpleImputer(strategy='most_frequent')), ('one_hot', OneHotEncoder()), ])
+    num_attribs = list(titanic_num)
+    cat1_attribs = list(titanic_cat1)
+    cat2_attribs = list(titanic_cat2)
+    full_pipeline = ColumnTransformer([('num', num_pipline, num_attribs), ('cat1', cat1_pipline, cat1_attribs),
+                                       ('cat2', cat2_pipline, cat2_attribs), ])
+    titanic_prepared = full_pipeline.fit_transform(titanic_df)
+    onehot_attribs = list(full_pipeline.transformers_[2][1]['one_hot'].get_feature_names(cat2_attribs))
+    attribs = num_attribs + cat1_attribs + onehot_attribs
+
+    return titanic_prepared, titanic_labels, attribs
+
+def data_training(t,t_l, a):
 
     forest_reg = RandomForestClassifier()
     forest_reg.fit(t, t_l)
+    # scores = cross_val_score(forest_reg, t, t_l, scoring="neg_mean_squared_error", cv=5)
+    # frc_mse = mean_squared_error(titanic_labels, titanic_pred)
+    # frc_rmse_scores = np.sqrt(-scores)
+    # print(frc_rmse_scores)
     # titanic_pred = forest_reg.predict(titanic)
     #scores = cross_val_score(forest_reg, titanic, titanic_labels, scoring="accuracy", cv=3)
     # frc_mse = mean_squared_error(titanic_labels, titanic_pred)
@@ -118,24 +116,26 @@ def data_training(t,t_l):
     std = np.std([tree.feature_importances_ for tree in forest_reg.estimators_],
                  axis=0)
     indices = np.argsort(importances)[::-1]
+    #t_df = pd.DataFrame(t)
 
-    # Print the feature ranking
+
+    #Print the feature ranking
     print("Feature ranking:")
-
+    attr = [" "]*t.shape[1]
     for f in range(t.shape[1]):
-        print("%d. feature %d (%f)" % (f + 1, indices[f], importances[indices[f]])+ " " + t.columns[indices[f]])
-
+        attr[f] = a[indices[f]]
+        print("%02d. feature %d (%f) - %s" % (f + 1, indices[f], importances[indices[f]], attr[f]))
     # Plot the impurity-based feature importances of the forest
     plt.figure()
     plt.title("Feature importances")
     plt.bar(range(t.shape[1]), importances[indices],
             color="r", yerr=std[indices], align="center")
-    degrees = 20
+    degrees = 30
     plt.xticks(rotation=degrees, fontsize=8)
-    plt.xticks(range(t.shape[1]), t.columns[indices])
+    plt.xticks(range(t.shape[1]), attr)
     plt.xlim([-1, t.shape[1]])
     plt.show()
 
 if __name__ == "__main__":
-    titanic, titanic_labels = data_preparation()
-    data_training(titanic, titanic_labels)
+    titanic, titanic_labels, attribs = data_preparation()
+    data_training(titanic, titanic_labels, attribs)
